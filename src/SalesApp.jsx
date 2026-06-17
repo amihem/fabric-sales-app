@@ -355,86 +355,122 @@ function AgencyTab({data,onAdd,onAddPay,onDel,agencyOut}) {
 
 // ─── OUTSTANDING TAB ──────────────────────────────────────────
 function OutstandingTab({tradingOut,agencyOut,data,onTradingPay,onAgencyPay}) {
-  const [view,setView]=useState("trading");
+  const [filter,setFilter]=useState("All");
 
   const phoneMap={};
   data.customers.forEach(c=>{phoneMap[c.id]=c.phone;});
 
-  const tradingEntries = Object.entries(tradingOut)
-    .map(([id,v])=>({id,...v,net:Math.max(0,v.due-v.paid)}))
-    .filter(e=>e.net>0).sort((a,b)=>b.net-a.net);
+  // Merge trading + agency into one customer-wise list
+  const allIds = new Set([...Object.keys(tradingOut),...Object.keys(agencyOut)]);
+  const merged = [...allIds].map(id=>{
+    const t = tradingOut[id]||{name:agencyOut[id]?.name||id,due:0,paid:0};
+    const a = agencyOut[id]||{name:tradingOut[id]?.name||id,due:0,paid:0,cdGiven:0};
+    const tNet = Math.max(0,t.due-t.paid);
+    const aNet = Math.max(0,a.due-a.paid-(a.cdGiven||0));
+    return {
+      id,name:t.name||a.name,
+      tDue:t.due,tPaid:t.paid,tNet,
+      aDue:a.due,aPaid:a.paid,aCd:a.cdGiven||0,aNet,
+      total:tNet+aNet
+    };
+  });
 
-  const agencyEntries = Object.entries(agencyOut)
-    .map(([id,v])=>({id,...v,net:Math.max(0,v.due-v.paid-v.cdGiven)}))
-    .filter(e=>e.net>0).sort((a,b)=>b.net-a.net);
+  const entries = merged.filter(e=>{
+    if(filter==="Trading") return e.tNet>0;
+    if(filter==="Agency")  return e.aNet>0;
+    return e.total>0;
+  }).sort((a,b)=>b.total-a.total);
 
-  const buildWAMsg = (entries, type) => {
+  const totTrading = entries.reduce((a,e)=>a+e.tNet,0);
+  const totAgency  = entries.reduce((a,e)=>a+e.aNet,0);
+
+  const buildSummaryWA = () => {
     const d = new Date().toLocaleDateString("en-IN");
-    const lines = entries.map(e=>`• ${e.name}: ₹${fmt(e.net)}`).join("\n");
-    const total = entries.reduce((a,e)=>a+e.net,0);
-    return `🧵 *Fabric Business — ${type} Outstanding*\n📅 ${d}\n\n${lines}\n\n*Total: ₹${fmt(total)}*`;
+    const lines = entries.map(e=>`• ${e.name}: ₹${fmt(e.total)} (Trading: ₹${fmt(e.tNet)} / Agency: ₹${fmt(e.aNet)})`).join("\n");
+    const tot = entries.reduce((a,e)=>a+e.total,0);
+    return `🧵 *Outstanding Summary (Trading + Agency)*\n📅 ${d}\n\n${lines}\n\n*Grand Total: ₹${fmt(tot)}*`;
   };
 
-  const buildPartyWA = (e, type) => {
+  const buildPartyWA = (e) => {
     const d = new Date().toLocaleDateString("en-IN");
-    return `🧵 *Fabric Business*\n📅 ${d}\n\nDear *${e.name}*,\n\nYour ${type} outstanding:\n💰 Total Due: ₹${fmt(e.due)}\n✅ Paid: ₹${fmt(e.paid)}${type==="Agency"?`\n🎁 CD Given: ₹${fmt(e.cdGiven||0)}`:""}\n⚠️ *Balance: ₹${fmt(e.net)}*\n\nKindly arrange payment 🙏`;
+    let msg = `🧵 *Fabric Business*\n📅 ${d}\n\nDear *${e.name}*,\n\nYour outstanding summary:\n`;
+    if(e.tNet>0) msg += `\n🏪 *Trading*\nDue: ₹${fmt(e.tDue)} · Paid: ₹${fmt(e.tPaid)}\nBalance: ₹${fmt(e.tNet)}\n`;
+    if(e.aNet>0) msg += `\n🤝 *Agency*\nDue: ₹${fmt(e.aDue)} · Paid: ₹${fmt(e.aPaid)} · CD: ₹${fmt(e.aCd)}\nBalance: ₹${fmt(e.aNet)}\n`;
+    msg += `\n⚠️ *Total Due: ₹${fmt(e.total)}*\n\nKindly arrange payment at the earliest 🙏`;
+    return msg;
   };
 
   return (
     <div>
-      <SegCtrl options={[{v:"trading",l:"🏪 Trading"},{v:"agency",l:"🤝 Agency"}]} val={view} onChange={setView}/>
-      <div style={{margin:"12px 0 8px",display:"flex",gap:8}}>
-        {view==="trading"
-          ? <><Btn color="#2980B9" onClick={onTradingPay}>+ Trading Payment</Btn>
-              <Btn color="#25D366" onClick={()=>waOpen("",buildWAMsg(tradingEntries,"Trading"))}>📲 WA Summary</Btn></>
-          : <><Btn color="#27AE60" onClick={onAgencyPay}>+ Agency Payment</Btn>
-              <Btn color="#25D366" onClick={()=>waOpen("",buildWAMsg(agencyEntries,"Agency"))}>📲 WA Summary</Btn></>}
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+        <Btn color="#2980B9" onClick={onTradingPay}>+ Trading Payment</Btn>
+        <Btn color="#27AE60" onClick={onAgencyPay}>+ Agency Payment</Btn>
+        <Btn color="#25D366" onClick={()=>waOpen("",buildSummaryWA())}>📲 WA Summary</Btn>
       </div>
 
-      {/* Summary card */}
-      <div style={{background:"#fff",borderRadius:12,padding:12,marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.06)",borderLeft:`4px solid ${view==="trading"?"#2980B9":"#27AE60"}`}}>
-        <Mute>Total {view==="trading"?"Trading":"Agency"} Outstanding</Mute>
-        <div style={{fontSize:22,fontWeight:900,color:view==="trading"?"#2980B9":"#27AE60"}}>
-          ₹{fmt(view==="trading"
-            ? tradingEntries.reduce((a,e)=>a+e.net,0)
-            : agencyEntries.reduce((a,e)=>a+e.net,0))}
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        {["All","Trading","Agency"].map(f=>(
+          <button key={f} onClick={()=>setFilter(f)}
+            style={{padding:"6px 14px",borderRadius:20,fontSize:11.5,fontWeight:filter===f?700:500,border:`1.5px solid ${filter===f?"#0F1923":"#ddd"}`,background:filter===f?"#0F1923":"#fff",color:filter===f?"#E8C97E":"#666",cursor:"pointer"}}>
+            {f}
+          </button>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div style={{background:"#EAF4FC",borderRadius:12,padding:12,borderLeft:"4px solid #2980B9"}}>
+          <Mute>Trading Outstanding</Mute>
+          <div style={{fontSize:18,fontWeight:900,color:"#2980B9"}}>₹{fmt(totTrading)}</div>
+        </div>
+        <div style={{background:"#E9F7EF",borderRadius:12,padding:12,borderLeft:"4px solid #27AE60"}}>
+          <Mute>Agency Outstanding</Mute>
+          <div style={{fontSize:18,fontWeight:900,color:"#27AE60"}}>₹{fmt(totAgency)}</div>
         </div>
       </div>
 
-      {view==="trading"&&<>
-        {tradingEntries.length===0&&<Empty text="No trading outstanding! ✅"/>}
-        {tradingEntries.map(e=>(
-          <div key={e.id} style={{background:"#fff",borderRadius:12,padding:"12px 14px",marginBottom:10,boxShadow:"0 1px 8px rgba(0,0,0,0.06)",borderLeft:"4px solid #2980B9"}}>
-            <Row><B style={{fontSize:14}}>{e.name}</B><span style={{fontWeight:900,fontSize:15,color:"#E74C3C"}}>₹{fmt(e.net)}</span></Row>
-            <Mute>Due: ₹{fmt(e.due)} · Paid: ₹{fmt(e.paid)}</Mute>
-            <button onClick={()=>waOpen(phoneMap[e.id]||"",buildPartyWA(e,"Trading"))}
-              style={{marginTop:8,background:"#E8FBF0",color:"#25D366",border:"1px solid #25D366",borderRadius:8,padding:"5px 14px",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>
-              📲 WhatsApp
-            </button>
-          </div>
-        ))}
-      </>}
+      <div style={{background:"linear-gradient(135deg,#0F1923,#1A3A5C)",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontSize:10,color:"#E8C97E",textTransform:"uppercase",letterSpacing:1}}>Grand Total Outstanding</div>
+        <div style={{fontSize:24,fontWeight:900,color:"#fff"}}>₹{fmt(totTrading+totAgency)}</div>
+      </div>
 
-      {view==="agency"&&<>
-        {agencyEntries.length===0&&<Empty text="No agency outstanding! ✅"/>}
-        {agencyEntries.map(e=>(
-          <div key={e.id} style={{background:"#fff",borderRadius:12,padding:"12px 14px",marginBottom:10,boxShadow:"0 1px 8px rgba(0,0,0,0.06)",borderLeft:"4px solid #27AE60"}}>
-            <Row><B style={{fontSize:14}}>{e.name}</B><span style={{fontWeight:900,fontSize:15,color:"#E74C3C"}}>₹{fmt(e.net)}</span></Row>
-            <Mute>Due: ₹{fmt(e.due)} · Paid: ₹{fmt(e.paid)} · CD Given: ₹{fmt(e.cdGiven)}</Mute>
-            <button onClick={()=>waOpen(phoneMap[e.id]||"",buildPartyWA(e,"Agency"))}
-              style={{marginTop:8,background:"#E8FBF0",color:"#25D366",border:"1px solid #25D366",borderRadius:8,padding:"5px 14px",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>
-              📲 WhatsApp
-            </button>
-          </div>
-        ))}
-      </>}
+      {entries.length===0&&<Empty text="No outstanding dues! ✅"/>}
+      {entries.map(e=>(
+        <div key={e.id} style={{background:"#fff",borderRadius:12,padding:"12px 14px",marginBottom:10,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
+          <Row><B style={{fontSize:15}}>{e.name}</B><span style={{fontWeight:900,fontSize:16,color:"#E74C3C"}}>₹{fmt(e.total)}</span></Row>
+
+          {(e.tDue>0||e.tNet>0)&&(
+            <div style={{marginTop:8,padding:"8px 10px",background:"#EAF4FC",borderRadius:8}}>
+              <Row>
+                <span style={{fontSize:11.5,fontWeight:700,color:"#2980B9"}}>🏪 Trading</span>
+                <span style={{fontSize:13,fontWeight:800,color:e.tNet>0?"#E74C3C":"#27AE60"}}>₹{fmt(e.tNet)}</span>
+              </Row>
+              <Mute>Due: ₹{fmt(e.tDue)} · Paid: ₹{fmt(e.tPaid)}</Mute>
+            </div>
+          )}
+
+          {(e.aDue>0||e.aNet>0)&&(
+            <div style={{marginTop:6,padding:"8px 10px",background:"#E9F7EF",borderRadius:8}}>
+              <Row>
+                <span style={{fontSize:11.5,fontWeight:700,color:"#27AE60"}}>🤝 Agency</span>
+                <span style={{fontSize:13,fontWeight:800,color:e.aNet>0?"#E74C3C":"#27AE60"}}>₹{fmt(e.aNet)}</span>
+              </Row>
+              <Mute>Due: ₹{fmt(e.aDue)} · Paid: ₹{fmt(e.aPaid)} · CD: ₹{fmt(e.aCd)}</Mute>
+            </div>
+          )}
+
+          <button onClick={()=>waOpen(phoneMap[e.id]||"",buildPartyWA(e))}
+            style={{marginTop:8,background:"#E8FBF0",color:"#25D366",border:"1px solid #25D366",borderRadius:8,padding:"5px 14px",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>
+            📲 Send WhatsApp
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
 
 // ─── AGING TAB ────────────────────────────────────────────────
 function AgingTab({data}) {
-  const [view,setView]=useState("trading");
+  const [filter,setFilter]=useState("All");
   const todayMs = new Date().setHours(0,0,0,0);
 
   function buildAging(sales, payments) {
@@ -443,11 +479,11 @@ function AgingTab({data}) {
       if(!map[s.customerId]) map[s.customerId]={name:s.customerName,invoices:[]};
       map[s.customerId].invoices.push({date:s.date,amount:+s.amount||0,id:s.id});
     });
-    // Simple: total paid deducted from oldest first
     const paidMap={};
     payments.forEach(p=>{ paidMap[p.customerId]=(paidMap[p.customerId]||0)+(+p.amount||+(p.netAmount)||0); });
 
-    return Object.entries(map).map(([id,v])=>{
+    const result={};
+    Object.entries(map).forEach(([id,v])=>{
       let remaining = paidMap[id]||0;
       const buckets={b0:0,b30:0,b60:0,b90:0,b120:0};
       const sorted=[...v.invoices].sort((a,b)=>new Date(a.date)-new Date(b.date));
@@ -463,16 +499,13 @@ function AgingTab({data}) {
         else               buckets.b120+=amt;
       });
       const total=Object.values(buckets).reduce((a,b)=>a+b,0);
-      return {id,name:v.name,...buckets,total};
-    }).filter(e=>e.total>0).sort((a,b)=>b.total-a.total);
+      result[id] = {name:v.name,...buckets,total};
+    });
+    return result;
   }
 
-  const tradingAging = buildAging(data.tradingSales, data.tradingPayments);
-  const agencyAging  = buildAging(data.agencySales,  data.agencyPayments);
-  const entries = view==="trading" ? tradingAging : agencyAging;
-
-  const phoneMap={};
-  data.customers.forEach(c=>{phoneMap[c.id]=c.phone;});
+  const tAging = buildAging(data.tradingSales, data.tradingPayments);
+  const aAging = buildAging(data.agencySales,  data.agencyPayments);
 
   const buckets=[
     {key:"b0",  label:"0–30d",  color:"#27AE60",bg:"#E9F7EF"},
@@ -482,23 +515,49 @@ function AgingTab({data}) {
     {key:"b120",label:"120d+",  color:"#922B21",bg:"#F5B7B1"},
   ];
 
-  const totals=entries.reduce((acc,e)=>{
-    buckets.forEach(b=>acc[b.key]=(acc[b.key]||0)+e[b.key]);
-    acc.total=(acc.total||0)+e.total; return acc;
-  },{});
+  // Merge customer-wise
+  const allIds = new Set([...Object.keys(tAging),...Object.keys(aAging)]);
+  const merged = [...allIds].map(id=>{
+    const t = tAging[id]||{name:aAging[id]?.name||id,total:0,b0:0,b30:0,b60:0,b90:0,b120:0};
+    const a = aAging[id]||{name:tAging[id]?.name||id,total:0,b0:0,b30:0,b60:0,b90:0,b120:0};
+    const combined={};
+    buckets.forEach(b=>{combined[b.key]=(t[b.key]||0)+(a[b.key]||0);});
+    return {id,name:t.name||a.name,tTotal:t.total,aTotal:a.total,total:t.total+a.total,t,a,combined};
+  });
+
+  const entries = merged.filter(e=>{
+    if(filter==="Trading") return e.tTotal>0;
+    if(filter==="Agency")  return e.aTotal>0;
+    return e.total>0;
+  }).sort((a,b)=>b.total-a.total);
+
+  const phoneMap={};
+  data.customers.forEach(c=>{phoneMap[c.id]=c.phone;});
+
+  const totals = buckets.reduce((acc,b)=>{acc[b.key]=entries.reduce((a,e)=>a+e.combined[b.key],0);return acc;},{});
+  const grandTotal = entries.reduce((a,e)=>a+e.total,0);
+  const totTrading = entries.reduce((a,e)=>a+e.tTotal,0);
+  const totAgency  = entries.reduce((a,e)=>a+e.aTotal,0);
 
   const buildAgingWA=()=>{
     const d=new Date().toLocaleDateString("en-IN");
-    const lines=entries.map(e=>`• ${e.name}: ₹${fmt(e.total)} (120d+: ₹${fmt(e.b120)})`).join("\n");
-    return `🧵 *${view==="trading"?"Trading":"Agency"} Aging Report*\n📅 ${d}\n\n${lines}\n\n*Total: ₹${fmt(totals.total||0)}*`;
+    const lines=entries.map(e=>`• ${e.name}: ₹${fmt(e.total)} (120d+: ₹${fmt(e.combined.b120)})`).join("\n");
+    return `🧵 *Aging Report (Trading + Agency)*\n📅 ${d}\n\n${lines}\n\n*Grand Total: ₹${fmt(grandTotal)}*`;
   };
 
   return (
     <div>
-      <SegCtrl options={[{v:"trading",l:"🏪 Trading"},{v:"agency",l:"🤝 Agency"}]} val={view} onChange={setView}/>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        {["All","Trading","Agency"].map(f=>(
+          <button key={f} onClick={()=>setFilter(f)}
+            style={{padding:"6px 14px",borderRadius:20,fontSize:11.5,fontWeight:filter===f?700:500,border:`1.5px solid ${filter===f?"#0F1923":"#ddd"}`,background:filter===f?"#0F1923":"#fff",color:filter===f?"#E8C97E":"#666",cursor:"pointer"}}>
+            {f}
+          </button>
+        ))}
+      </div>
 
       {/* Summary buckets */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,margin:"12px 0"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
         {buckets.map(b=>(
           <div key={b.key} style={{background:b.bg,borderRadius:12,padding:"10px 12px",borderLeft:`4px solid ${b.color}`}}>
             <div style={{fontSize:10,color:b.color,fontWeight:700,textTransform:"uppercase"}}>{b.label}</div>
@@ -507,10 +566,22 @@ function AgingTab({data}) {
         ))}
       </div>
 
+      {/* Trading vs Agency split */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:"#EAF4FC",borderRadius:12,padding:"10px 12px",borderLeft:"4px solid #2980B9"}}>
+          <Mute>🏪 Trading Aging</Mute>
+          <div style={{fontSize:16,fontWeight:900,color:"#2980B9"}}>₹{fmt(totTrading)}</div>
+        </div>
+        <div style={{background:"#E9F7EF",borderRadius:12,padding:"10px 12px",borderLeft:"4px solid #27AE60"}}>
+          <Mute>🤝 Agency Aging</Mute>
+          <div style={{fontSize:16,fontWeight:900,color:"#27AE60"}}>₹{fmt(totAgency)}</div>
+        </div>
+      </div>
+
       <div style={{background:"linear-gradient(135deg,#0F1923,#1A3A5C)",borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div>
-          <div style={{fontSize:10,color:"#E8C97E",textTransform:"uppercase",letterSpacing:1}}>Total Outstanding</div>
-          <div style={{fontSize:22,fontWeight:900,color:"#fff"}}>₹{fmt(totals.total||0)}</div>
+          <div style={{fontSize:10,color:"#E8C97E",textTransform:"uppercase",letterSpacing:1}}>Grand Total Outstanding</div>
+          <div style={{fontSize:22,fontWeight:900,color:"#fff"}}>₹{fmt(grandTotal)}</div>
         </div>
         <button onClick={()=>waOpen("",buildAgingWA())}
           style={{background:"#25D366",color:"#fff",border:"none",borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
@@ -518,23 +589,38 @@ function AgingTab({data}) {
         </button>
       </div>
 
-      {entries.length===0&&<Empty text={`No ${view} aging data.`}/>}
+      {entries.length===0&&<Empty text="No aging data yet."/>}
       {entries.map(e=>(
         <div key={e.id} style={{background:"#fff",borderRadius:12,padding:"12px 14px",marginBottom:10,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
-          <Row><B style={{fontSize:14}}>{e.name}</B><span style={{fontWeight:900,color:"#C0392B"}}>₹{fmt(e.total)}</span></Row>
+          <Row><B style={{fontSize:15}}>{e.name}</B><span style={{fontWeight:900,color:"#C0392B",fontSize:16}}>₹{fmt(e.total)}</span></Row>
+
           <div style={{marginTop:8}}>
-            {buckets.map(b=>e[b.key]>0&&(
+            {buckets.map(b=>e.combined[b.key]>0&&(
               <div key={b.key} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
                 <div style={{fontSize:10,color:b.color,fontWeight:700,width:60,flexShrink:0}}>{b.label}</div>
                 <div style={{flex:1,background:"#F0F4F8",borderRadius:4,height:5}}>
-                  <div style={{width:`${Math.min(100,e[b.key]/e.total*100)}%`,background:b.color,height:5,borderRadius:4}}/>
+                  <div style={{width:`${Math.min(100,e.combined[b.key]/e.total*100)}%`,background:b.color,height:5,borderRadius:4}}/>
                 </div>
-                <div style={{fontSize:11,fontWeight:700,color:b.color,width:72,textAlign:"right",flexShrink:0}}>₹{fmt(e[b.key])}</div>
+                <div style={{fontSize:11,fontWeight:700,color:b.color,width:72,textAlign:"right",flexShrink:0}}>₹{fmt(e.combined[b.key])}</div>
               </div>
             ))}
           </div>
-          {e.b120>0&&(
-            <button onClick={()=>waOpen(phoneMap[e.id]||"",`🧵 Dear ${e.name},\n\n⚠️ Your payment of ₹${fmt(e.b120)} is overdue 120+ days.\n\nTotal outstanding: ₹${fmt(e.total)}\n\nKindly arrange immediately 🙏`)}
+
+          {e.tTotal>0&&(
+            <div style={{marginTop:8,padding:"7px 10px",background:"#EAF4FC",borderRadius:8,display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#2980B9"}}>🏪 Trading</span>
+              <span style={{fontSize:12,fontWeight:800,color:"#2980B9"}}>₹{fmt(e.tTotal)}</span>
+            </div>
+          )}
+          {e.aTotal>0&&(
+            <div style={{marginTop:6,padding:"7px 10px",background:"#E9F7EF",borderRadius:8,display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#27AE60"}}>🤝 Agency</span>
+              <span style={{fontSize:12,fontWeight:800,color:"#27AE60"}}>₹{fmt(e.aTotal)}</span>
+            </div>
+          )}
+
+          {e.combined.b120>0&&(
+            <button onClick={()=>waOpen(phoneMap[e.id]||"",`🧵 Dear ${e.name},\n\n⚠️ Payment of ₹${fmt(e.combined.b120)} is overdue 120+ days.\n\nTotal outstanding (Trading+Agency): ₹${fmt(e.total)}\n\nKindly arrange immediately 🙏`)}
               style={{marginTop:8,background:"#FADBD8",color:"#922B21",border:"1px solid #922B21",borderRadius:8,padding:"5px 14px",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>
               📲 Send Urgent Reminder
             </button>
