@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 
-// ─── PERSISTENT STORAGE (FIXED FOR NETLIFY/GITHUB) ───────────
-const SK = "fabric-sales-v1";
+// ─── PERSISTENT STORAGE ──────────────────────────────────────
+const SK = "fabric-sales-v2"; // Changed key to force a clean slate for the new robust logic
 const EMPTY = {
   customers: [],   
   suppliers: [],   
@@ -11,20 +11,6 @@ const EMPTY = {
   tradingPayments: [], 
   agencyPayments: [],  
 };
-
-// Standardized to use browser's native localStorage
-async function loadData() {
-  try { 
-    const r = localStorage.getItem(SK); 
-    if (r) return { ...EMPTY, ...JSON.parse(r) }; 
-  } catch(e) { console.error("Error loading data:", e); }
-  return { ...EMPTY };
-}
-async function saveData(d) { 
-  try { 
-    localStorage.setItem(SK, JSON.stringify(d)); 
-  } catch(e) { console.error("Error saving data:", e); } 
-}
 
 // ─── UTILS ───────────────────────────────────────────────────
 const fmt   = n  => Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
@@ -82,13 +68,35 @@ const TABS = ["Dashboard","Trading","Agency","Outstanding","Aging","Commission",
 
 // ─── APP ROOT ─────────────────────────────────────────────────
 export default function App() {
-  const [tab,    setTab]    = useState("Dashboard");
-  const [data,   setData]   = useState(null);
-  const [modal,  setModal]  = useState(null);
-  const [toast,  setToast]  = useState(null);
+  const [tab, setTab] = useState("Dashboard");
+  const [data, setData] = useState(EMPTY);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [modal, setModal] = useState(null);
+  const [toast, setToast] = useState(null);
 
-  useEffect(()=>{ loadData().then(setData); },[]);
-  useEffect(()=>{ if(data) saveData(data); },[data]);
+  // Robust Synchronous Data Load
+  useEffect(() => {
+    try {
+      const savedData = localStorage.getItem(SK);
+      if (savedData) {
+        setData({ ...EMPTY, ...JSON.parse(savedData) });
+      }
+    } catch (e) {
+      console.error("Failed to load data from localStorage", e);
+    }
+    setIsLoaded(true);
+  }, []);
+
+  // Robust Synchronous Data Save
+  useEffect(() => {
+    if (isLoaded) {
+      try {
+        localStorage.setItem(SK, JSON.stringify(data));
+      } catch (e) {
+        console.error("Failed to save data to localStorage", e);
+      }
+    }
+  }, [data, isLoaded]);
 
   const showToast = (msg,err) => { setToast({msg,err}); setTimeout(()=>setToast(null),2800); };
 
@@ -116,7 +124,7 @@ export default function App() {
     e.target.value="";
   };
 
-  if(!data) return (
+  if(!isLoaded) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0F1923",flexDirection:"column",gap:12}}>
       <div style={{fontSize:44}}>🧵</div>
       <div style={{color:"#E8C97E",fontWeight:800,fontSize:16,letterSpacing:1}}>Loading your data…</div>
